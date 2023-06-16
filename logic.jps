@@ -1,0 +1,317 @@
+type: update
+jpsVersion: 6.1.1
+logo: /images/mysql-based-ssl-addon.svg
+name: SSL/TLS Encrypted Connection
+id: mysql-based-ssl-logic
+targetEditions: any
+description: Enforce DB Connection to use SSL/TLS. Certificate folder /var/lib/jelastic/keys/SSL-TLS
+baseUrl: https://raw.githubusercontent.com/jelastic-jps/MySQL-based-SSL-add-on/main
+
+targetNodes:
+  nodeType:
+    - mysql
+    - mysql8
+    - mysql5
+    - mariadb-dockerized
+    - mariadb10
+    - mariadb106
+    - mariadb108
+    - mariadb104 
+    - mariadb103
+    - mariadb1010
+    - mariadb107
+    - mariadb109
+    - mariadb105
+    - percona5
+    - percona5.7
+    - percona8
+    - percona8.0
+    - perconadb
+    - proxysql
+    
+globals:
+  galeraConfigFile: /etc/mysql/conf.d/galera.cnf
+  dbConfigFile: /etc/mysql/conf.d/ssl-config.cnf
+  proxysqlDir: /var/lib/proxysql
+  certFolder: /var/lib/jelastic/keys/SSL-TLS
+  keyPass: ${fn.password}
+
+onInstall:
+  - installCertsOnEnv
+
+onUninstall:
+  - disableSSL
+
+onAfterRedeployContainer[${targetNodes.nodeGroup}]:
+  - if (!${event.params.useExistingVolumes:true}):
+     - turnOnSSLForNodes:
+         nodesToEnableSSL: ${targetNodes.nodeGroup}
+      
+onAfterServiceScaleOut[${targetNodes.nodeGroup}]:
+  - cmd[${targetNodes.nodeGroup}]: |-
+      mkdir -p /var/lib/jelastic/keys/SSL-TLS/server/
+      wget -O /usr/local/sbin/copyCert ${baseUrl}/scripts/copyCert?_r=${fn.random};
+      chmod +x /usr/local/sbin/copyCert
+      grep -q  "${globals.certFolder}" /etc/jelastic/redeploy.conf || echo "${globals.certFolder}" >> /etc/jelastic/redeploy.conf
+      source /etc/jelastic/metainf.conf
+      if [ "x$COMPUTE_TYPE" == "xmariadb" ] ; then
+          if [ -f "${globals.dbConfigFile}" ]; then
+              grep -q '^[[:space:]]*\[sst\]' ${globals.dbConfigFile} || echo '[sst]' >> ${globals.dbConfigFile}
+              grep -q '^[[:space:]]*ssl-mode=DISABLED' ${globals.dbConfigFile} || sed -ci -e '/\[sst\]/ a\ssl-mode=DISABLED' ${globals.dbConfigFile}
+          fi
+      fi
+    user: root
+  - getMasterId
+  - cmd[${globals.masterId}]: copyCert getCert ${globals.certFolder}/server/root.crt
+  - setGlobals:
+      rootCaCert: ${response.out}
+  - cmd[${globals.masterId}]: copyCert getCert ${globals.certFolder}/server/root.key
+  - setGlobals:
+      rootCaKey: ${response.out}
+  - uploadCertsAndKeys:
+      newNodes: ${event.response.nodes.join(id,)}
+  - addCertsForNewNodes
+  - fixCertOwnPerm
+  - enableSSL:
+      affectedNodes: ${event.response.nodes.join(id,)}
+
+onAfterClone:
+  - script: return {result:0, jps:MANIFEST};
+  - install [${settings.nodeGroups}]:
+      envName: ${event.response.env.envName}
+      jps: ${response.jps}
+      settings:        
+        nodeGroups: ${settings.nodeGroups}
+        envName: ${settings.envName}
+
+buttons:
+  - confirmText: Do you want to reissue the SSL certificates and key (service restart needed)?
+    loadingText: Reissuing the certificates...
+    action: reGenerateCerts
+    caption: Re-issue certificates
+    successText: Certificates reissued successfully
+
+actions:
+  installCertsOnEnv:
+    - checkApplication
+    - getMasterId
+    - env.control.AddContainerEnvVars[${targetNodes.nodeGroup}]:
+        vars: {"KEY_PASS":"${globals.keyPass}"}
+    - cmd[${targetNodes.nodeGroup}]: |-
+        mkdir -p /var/lib/jelastic/keys/SSL-TLS/server/
+        wget -O /usr/local/sbin/copyCert ${baseUrl}/scripts/copyCert?_r=${fn.random};
+        chmod +x /usr/local/sbin/copyCert
+      user: root
+    - turnOnSSLForNodes:
+        nodesToEnableSSL: ${globals.masterId}
+    - if (nodes.${targetNodes.nodeGroup}.length > 1):
+        - cmd[${globals.masterId}]: copyCert getCert ${globals.certFolder}/server/root.crt
+        - setGlobals:
+            rootCaCert: ${response.out}
+        - cmd[${globals.masterId}]: copyCert getCert ${globals.certFolder}/server/root.key
+        - setGlobals:
+            rootCaKey: ${response.out}
+        - uploadCertsAndKeys:
+            newNodes: ${targetNodes.nodeGroup}
+        - cmd[${targetNodes.nodeGroup}]: |-
+            chown 700:700 ${globals.certFolder}/*
+          user: root
+        - turnOnSSLForNodes:
+            nodesToEnableSSL: ${targetNodes.nodeGroup}
+
+  uploadCertsAndKeys:
+    - cmd[${this.newNodes}]: |-
+        copyCert uploadCert ${globals.certFolder}/root.key '${globals.rootCaKey}'
+        copyCert uploadCert ${globals.certFolder}/root.crt '${globals.rootCaCert}'
+      user: root
+
+  reGenerateCerts:
+    - forEach(nodes.${targetNodes.nodeGroup}):
+      - cmd[${@i.id}]: jem service stop 
+    - cmd[${targetNodes.nodeGroup}]: |-
+        source /etc/jelastic/metainf.conf
+        if [ "x$COMPUTE_TYPE" == "xproxysql" ] ; then
+            rm -f ${globals.proxysqlDir}/proxysql-ca.pem; 
+            rm -f ${globals.proxysqlDir}/proxysql-key.pem; 
+            rm -f ${globals.proxysqlDir}/proxysql-cert.pem;
+        fi
+        rm -rf ${globals.certFolder}/*;
+      user: root
+    - installCertsOnEnv
+            
+  getMasterId:
+    - forEach(nodes.${targetNodes.nodeGroup}):
+      - cmd[${@i.id}]: |- 
+          source /.jelenv;  
+          echo ${MASTER_ID};
+      - setGlobals:
+          masterId: ${response.out}
+
+  generateCerts:
+    - cmd[${this.affectedNodes}]: |-
+        cd /var/lib/mysql; rm -rf ca-key.pem ca.pem client-cert.pem client-key.pem private_key.pem public_key.pem server-cert.pem server-key.pem;
+        [ -f /usr/local/sbin/selfcertgen ] && rm -f /usr/local/sbin/selfcertgen;
+        [ -f /usr/local/sbin/copyCert ] && rm -f /usr/local/sbin/copyCert;
+        wget -O /usr/local/sbin/selfcertgen ${baseUrl}/scripts/selfcertgen?_r=${fn.random};
+        wget -O /usr/local/sbin/copyCert ${baseUrl}/scripts/copyCert?_r=${fn.random};
+        chmod +x /usr/local/sbin/selfcertgen /usr/local/sbin/copyCert
+        selfcertgen root ${env.domain} ${targetNodes.nodeGroup};
+        chown -R 700:700 ${globals.certFolder} /usr/local/sbin/selfcertgen; chmod 600 ${globals.certFolder}/*
+      user: root
+    - cmd[${this.affectedNodes}]: |-
+        rm -rf ${globals.certFolder}/client; mkdir -p ${globals.certFolder}/client;
+        rm -rf ${globals.certFolder}/server; mkdir -p ${globals.certFolder}/server;
+        chown -R 700:700 ${globals.certFolder}/*
+        rm -f ${globals.certFolder}/client.csr ${globals.certFolder}/server.csr ${globals.certFolder}/client-req.pem ${globals.certFolder}/server-req.pem
+        for i in client.crt client.key
+        do
+            [ -f ${globals.certFolder}/${i} ] && mv -f ${globals.certFolder}/${i} ${globals.certFolder}/client/${i}
+        done
+        for i in root.crt root.srl server.crt server.key root.key
+        do
+            [ -f ${globals.certFolder}/${i} ] && mv -f ${globals.certFolder}/${i} ${globals.certFolder}/server/${i}
+        done
+        ln -sfT ${globals.certFolder}/server/root.crt ${globals.certFolder}/client/root.crt
+      user: root
+
+  enableSSL:
+    - cmd[${this.affectedNodes}]: |-
+        source /etc/jelastic/metainf.conf
+        if [ "x$COMPUTE_TYPE" != "xproxysql" ] ; then
+            touch ${globals.dbConfigFile}
+            chown 700:700 ${globals.dbConfigFile}
+        fi
+      user: root
+    - cmd[${this.affectedNodes}]: |-
+        echo "${globals.certFolder}" >> /etc/jelastic/redeploy.conf
+        source /etc/jelastic/metainf.conf
+        if [ "x$COMPUTE_TYPE" == "xmariadb" ] ; then
+            if [ -f "${globals.dbConfigFile}" ]; then
+                grep -q '^[[:space:]]*\[sst\]' ${globals.dbConfigFile} || echo '[sst]' >> ${globals.dbConfigFile}
+                grep -q '^[[:space:]]*ssl-mode=DISABLED' ${globals.dbConfigFile} || sed -ci -e '/\[sst\]/ a\ssl-mode=DISABLED' ${globals.dbConfigFile}
+            fi
+        fi
+        if [ "x$COMPUTE_TYPE" != "xproxysql" ] ; then
+            grep -q '^[[:space:]]*\[mysqld\]' ${globals.dbConfigFile} || echo '[mysqld]' >> ${globals.dbConfigFile}
+            grep -q '^[[:space:]]*#require_secure_transport=ON' ${globals.dbConfigFile} || sed -ci -e '/\[mysqld\]/ a\#require_secure_transport=ON' ${globals.dbConfigFile}
+            grep -q '^[[:space:]]*#ssl-cipher' ${globals.dbConfigFile} || sed -ci -e '/\[mysqld\]/ a\#ssl-cipher=ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA' ${globals.dbConfigFile}
+            grep -q '^[[:space:]]*ssl_key' ${globals.dbConfigFile} || sed -ci -e '/\[mysqld\]/ a\ssl_key=\/var\/lib\/jelastic\/keys\/SSL-TLS\/server\/server.key' ${globals.dbConfigFile}
+            grep -q '^[[:space:]]*ssl_cert' ${globals.dbConfigFile} || sed -ci -e '/\[mysqld\]/ a\ssl_cert=\/var\/lib\/jelastic\/keys\/SSL-TLS\/server\/server.crt' ${globals.dbConfigFile}
+            grep -q '^[[:space:]]*ssl_ca' ${globals.dbConfigFile} || sed -ci -e '/\[mysqld\]/ a\ssl_ca=\/var\/lib\/jelastic\/keys\/SSL-TLS\/server\/root.crt' ${globals.dbConfigFile}
+            grep -q '^[[:space:]]*!includedir[[:space:]]*/etc/mysql/conf.d/' /etc/my.cnf || echo '!includedir /etc/mysql/conf.d/' >> /etc/my.cnf
+        else
+            ln -sfT ${globals.certFolder}/server/root.crt ${globals.proxysqlDir}/proxysql-ca.pem; 
+            ln -sfT ${globals.certFolder}/server/server.key ${globals.proxysqlDir}/proxysql-key.pem; 
+            ln -sfT ${globals.certFolder}/server/server.crt ${globals.proxysqlDir}/proxysql-cert.pem;
+            service proxysql status || jem service restart
+            retries=60
+            while [ $retries -gt 0 ]; do
+                [ -n "$(netstat -nlpt 2>/dev/null | grep proxysql)" ] && break
+                sleep 1
+                let retries=${retries}-1
+            done
+            mysql -uadmin -padmin -h 127.0.0.1 -P 6032 -e "UPDATE global_variables SET variable_value='true' WHERE variable_name='mysql-have_ssl';"
+            mysql -uadmin -padmin -h 127.0.0.1 -P 6032 -e "LOAD MYSQL VARIABLES TO RUNTIME; SAVE MYSQL VARIABLES TO DISK;"
+        fi
+      user: root
+    - if ('${targetNodes.nodeGroup}'.indexOf('proxysql') == -1):
+        - restartNodes:
+            nodeGroup: ${targetNodes.nodeGroup}
+            isSequential: true
+    - if (nodes.proxysql):
+        - cmd[${targetNodes.nodeGroup}]: |-
+            source /etc/jelastic/metainf.conf
+            if [ "x$COMPUTE_TYPE" == "xproxysql" ] ; then
+                service proxysql status || jem service restart
+                retries=60
+                while [ $retries -gt 0 ]; do
+                    [ -n "$(netstat -nlpt 2>/dev/null | grep proxysql)" ] && break
+                    sleep 1
+                    let retries=${retries}-1
+                done
+                mysql -uadmin -padmin -h 127.0.0.1 -P 6032 -e "UPDATE mysql_servers SET use_ssl=1 WHERE port=3306;"
+                mysql -uadmin -padmin -h 127.0.0.1 -P 6032 -e "LOAD MYSQL VARIABLES TO RUNTIME; LOAD MYSQL SERVERS TO RUNTIME; SAVE MYSQL SERVERS TO DISK;"
+            fi
+  
+  disableSSL:
+    - cmd[${targetNodes.nodeGroup}]: |-
+        source /etc/jelastic/metainf.conf
+        if [ "x$COMPUTE_TYPE" != "xproxysql" ] ; then
+            touch ${globals.dbConfigFile}
+            chown 700:700 ${globals.dbConfigFile}
+            sed -ci -e '/^[[:space:]]*require_secure_transport=ON/d' ${globals.dbConfigFile}
+            sed -ci -e '/^[[:space:]]*ssl-cipher/d' ${globals.dbConfigFile}
+            sed -ci -e '/^[[:space:]]*ssl_ca/d' ${globals.dbConfigFile}
+            sed -ci -e '/^[[:space:]]*ssl_cert/d' ${globals.dbConfigFile}
+            sed -ci -e '/^[[:space:]]*ssl_key/d' ${globals.dbConfigFile}
+        else
+            service proxysql status || jem service restart
+            retries=60
+            while [ $retries -gt 0 ]; do
+                [ -n "$(netstat -nlpt 2>/dev/null | grep proxysql)" ] && break
+                sleep 1
+                let retries=${retries}-1
+            done
+            mysql -uadmin -padmin -h 127.0.0.1 -P 6032 -e "UPDATE mysql_servers SET use_ssl=0 WHERE port=3306;"
+            mysql -uadmin -padmin -h 127.0.0.1 -P 6032  -e "UPDATE global_variables SET variable_value='false' WHERE variable_name='mysql-have_ssl';"
+            mysql -uadmin -padmin -h 127.0.0.1 -P 6032  -e "LOAD MYSQL VARIABLES TO RUNTIME; SAVE MYSQL VARIABLES TO DISK;"
+            mysql -uadmin -padmin -h 127.0.0.1 -P 6032  -e "LOAD MYSQL SERVERS TO RUNTIME; SAVE MYSQL SERVERS TO DISK;"
+            for i in proxysql-ca.pem proxysql-key.pem proxysql-cert.pem
+            do
+                rm -f ${globals.proxysqlDir}/${i};
+            done
+        fi
+      user: root
+    - restartNodes:
+        nodeGroup: ${targetNodes.nodeGroup}
+        isSequential: true
+    - cmd[${targetNodes.nodeGroup}]: |-  
+        for i in client.crt client.key root.crt
+        do
+            rm -f ${globals.certFolder}/client/${i}
+        done
+        for i in root.crt root.srl server.crt server.key
+        do
+            rm -f ${globals.certFolder}/server/${i}
+        done
+        sed -ci -e '/\/var\/lib\/jelastic\/keys\/SSL-TLS/d' /etc/jelastic/redeploy.conf
+        for i in client server
+        do
+            if [ -z "$(ls -A ${globals.certFolder}/${i})" ]; then
+                rm -rf ${globals.certFolder}/${i}
+            fi
+        done
+        rm -rf ${globals.certFolder}
+      user: root
+
+  addCertsForNewNodes:
+    - turnOnSSLForNodes:
+        nodesToEnableSSL: ${event.response.nodes.join(id,)}
+
+  checkAppVersion:
+    - cmd[${this.masternode}]: |-
+        source /etc/jelastic/metainf.conf
+        [ -f /root/check_app.sh ] && rm -f /root/check_app.sh;
+        wget -O /root/check_app.sh ${baseUrl}/scripts/check_app.sh?_r=${fn.random};
+        bash /root/check_app.sh;
+      user: root
+
+  fixCertOwnPerm:
+    - cmd[${targetNodes.nodeGroup}]: |-
+        chown -R 700:700 ${globals.certFolder}
+      user: root
+        
+  turnOnSSLForNodes:
+    - generateCerts: 
+        affectedNodes: ${this.nodesToEnableSSL}
+    - enableSSL:
+        affectedNodes: ${this.nodesToEnableSSL}
+
+  checkApplication:
+    - if ('${targetNodes.nodeGroup}'.indexOf('sqldb') > -1):
+      - checkAppVersion:
+          masternode: ${targetNodes.nodeGroup}
+      - if (response.out == "Non-supported"):
+        - stopEvent:
+            type: warning
+            message: Database version is not supported.

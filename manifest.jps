@@ -1,0 +1,63 @@
+type: install
+jpsVersion: 6.1.1
+logo: /images/mysql-based-ssl-addon.svg
+name: SSL/TLS Encrypted Connection for MySQL-based databases (MySQL/MariaDB/Percona)
+id: mysql-based-ssl
+targetEditions: any
+categories:
+  - apps/dev-and-admin-tools
+description: Enforce DB Connection to use SSL/TLS in MySQL/MariaDB/Percona cluster/standalone. Certificate folder /var/lib/jelastic/keys/SSL-TLS.
+baseUrl: https://raw.githubusercontent.com/jelastic-jps/MySQL-based-SSL-add-on/main
+
+targetNodes:
+  nodeType:
+    - mysql
+    - mysql8
+    - mysql5
+    - mariadb-dockerized
+    - mariadb10
+    - mariadb106
+    - mariadb108
+    - mariadb104 
+    - mariadb103
+    - mariadb1010
+    - mariadb107
+    - mariadb109
+    - mariadb105
+    - percona5
+    - percona5.7
+    - percona8
+    - percona8.0
+    - perconadb
+    - proxysql
+
+settings:
+  fields:
+    - type: list
+      name: envName
+      caption: Environment
+      required: true
+      values: []
+
+    - type: list
+      name: nodeGroups
+      caption: Node Group(s)
+      required: true
+      multiSelect: true
+      dependsOn:
+        envName: {}
+
+onBeforeInit: scripts/onBeforeInit.js
+
+onInstall:
+  - install [${settings.nodeGroups}]:
+      envName: ${settings.envName}
+      jps: logic.jps?_r=${fn.random}
+      settings:
+        nodeGroups: ${settings.nodeGroups}
+        envName: ${settings.envName}
+        
+success:
+  email: false
+  text: |
+    Your SSL/TLS Encrypted Connection for MySQL/MariaDB/Percona application has been successfully deployed to ${settings.envName} (target layers: ${settings.nodeGroups}).
