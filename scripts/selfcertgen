@@ -1,0 +1,56 @@
+#!/bin/bash
+
+source /etc/profile
+source /etc/jelastic/metainf.conf 
+
+TARGET_LAYER=$3
+ENV_NAME=$2
+MYSQL_USER=$1
+
+if [ -z "${ENV_NAME}" ]; then
+    NODE_NAME_LENGTH=$(hostname|grep -o 'node[0-9]*-'|wc -c)
+    ENV_NAME=$(hostname|cut -c ${NODE_NAME_LENGTH}- 2>/dev/null)
+fi
+
+if [ -z "${TARGET_LAYER}" ]; then
+    TARGET_LAYER=${COMPUTE_TYPE}
+fi
+
+CERT_DIR="/var/lib/jelastic/keys/SSL-TLS";
+[ -d "$CERT_DIR" ] || mkdir -p "$CERT_DIR";
+
+[ -z "$KEY_COUNTRY" ] && export KEY_COUNTRY="CH"
+[ -z "$KEY_PROVINCE" ] && export KEY_PROVINCE="8200"
+[ -z "$KEY_CITY" ] && export KEY_CITY="Schaffhausen";
+[ -z "$KEY_ORG" ] && export KEY_ORG="Virtuozzo International GmbH";
+[ -z "$KEY_EMAIL" ] && export KEY_EMAIL="me@myhost.mydomain"
+[ -z "$KEY_OU" ] && export KEY_OU="MyOrganizationalUnit"
+[ -z "$KEY_SIZE" ] && export KEY_SIZE=2048
+[ -z "$KEY_HOST" ] && export KEY_HOST=$(hostname)
+[ -z "$KEY_EXPIRE" ] && export KEY_EXPIRE=3650
+[ -z "$MYSQL_USER" ] && export MYSQL_USER="root"
+
+if [ ! -f ${CERT_DIR}/root.crt ]; then
+    RANDFILE=/tmp/.random openssl genrsa ${KEY_SIZE} > ${CERT_DIR}/root.key
+    RANDFILE=/tmp/.random openssl req -new -x509 -nodes -days 3650 -key ${CERT_DIR}/root.key -subj "/C=$KEY_COUNTRY/ST=$KEY_PROVINCE/L=$KEY_CITY/O=$KEY_ORG/CN=${TARGET_LAYER}.${ENV_NAME}" > ${CERT_DIR}/root.crt
+fi
+
+if [ ! -f ${CERT_DIR}/server.crt ]; then
+    RANDFILE=/tmp/.random openssl req -newkey rsa:2048 -days 3650 -nodes -subj "/C=$KEY_COUNTRY/ST=$KEY_PROVINCE/L=$KEY_CITY/O=$KEY_ORG/CN=${KEY_HOST}" -keyout ${CERT_DIR}/server.key > ${CERT_DIR}/server-req.pem
+    RANDFILE=/tmp/.random openssl x509 -req -in ${CERT_DIR}/server-req.pem -days 3650 -CA ${CERT_DIR}/root.crt -CAkey ${CERT_DIR}/root.key -set_serial 01 > ${CERT_DIR}/server.crt
+    chmod 400 ${CERT_DIR}/root.key ${CERT_DIR}/server.key ${CERT_DIR}/server.crt ${CERT_DIR}/root.crt
+fi
+
+if [ "x${MYSQL_USER}" == "xroot" ]; then
+    CLIENT_CERT_NAME="client"
+else
+    CLIENT_CERT_NAME="${MYSQL_USER}"
+fi
+
+if [ ! -f ${CERT_DIR}/${CLIENT_CERT_NAME}.crt ]; then
+    RANDFILE=/tmp/.random openssl req -newkey rsa:2048 -days 3650 -nodes -keyout ${CERT_DIR}/${CLIENT_CERT_NAME}.key -subj "/C=$KEY_COUNTRY/ST=$KEY_PROVINCE/L=$KEY_CITY/O=$KEY_ORG/CN=$MYSQL_USER" > ${CERT_DIR}/client-req.pem
+    RANDFILE=/tmp/.random openssl x509 -req -in ${CERT_DIR}/client-req.pem -days 3650 -CA ${CERT_DIR}/root.crt -CAkey ${CERT_DIR}/root.key -set_serial 01 > ${CERT_DIR}/${CLIENT_CERT_NAME}.crt
+fi
+
+chmod 600 /var/lib/jelastic/keys/SSL-TLS/*
+chown -R mysql:mysql /var/lib/jelastic/keys/SSL-TLS/* /var/lib/jelastic/keys/SSL-TLS
