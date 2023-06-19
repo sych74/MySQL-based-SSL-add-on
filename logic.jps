@@ -2,7 +2,7 @@ type: update
 jpsVersion: 6.1.1
 logo: /images/mysql-based-ssl-addon.svg
 name: SSL/TLS Encrypted Connection
-id: mysql-based-ssl-logic
+id: mysql-based-ssl
 targetEditions: any
 description: Enforce DB Connection to use SSL/TLS. Certificate folder /var/lib/jelastic/keys/SSL-TLS
 baseUrl: https://raw.githubusercontent.com/jelastic-jps/MySQL-based-SSL-add-on/main
