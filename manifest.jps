@@ -1,7 +1,7 @@
 type: install
 jpsVersion: 6.1.1
 logo: /images/mysql-based-ssl-addon.svg
-name: SSL/TLS Encrypted Connection for MySQL-based databases (MySQL/MariaDB/Percona)
+name: MySQL-based SSL/TLS Encrypted Connection (MySQL/MariaDB/Percona)
 id: mysql-based-ssl
 targetEditions: any
 categories:
