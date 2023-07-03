@@ -41,16 +41,20 @@ if [ ! -f ${CERT_DIR}/server.crt ]; then
     chmod 400 ${CERT_DIR}/root.key ${CERT_DIR}/server.key ${CERT_DIR}/server.crt ${CERT_DIR}/root.crt
 fi
 
-if [ "x${MYSQL_USER}" == "xroot" ]; then
-    CLIENT_CERT_NAME="client"
-else
-    CLIENT_CERT_NAME="${MYSQL_USER}"
+if [ "x${COMPUTE_TYPE}" != "xproxysql" ]; then
+    if [ "x${MYSQL_USER}" == "xroot" ]; then
+        CLIENT_CERT_NAME="client"
+    else
+        CLIENT_CERT_NAME="${MYSQL_USER}"
+    fi
+
+    if [ ! -f ${CERT_DIR}/${CLIENT_CERT_NAME}.crt ]; then
+        RANDFILE=/tmp/.random openssl req -newkey rsa:2048 -days 3650 -nodes -keyout ${CERT_DIR}/${CLIENT_CERT_NAME}.key -subj "/C=$KEY_COUNTRY/ST=$KEY_PROVINCE/L=$KEY_CITY/O=$KEY_ORG/CN=$MYSQL_USER" > ${CERT_DIR}/client-req.pem
+        RANDFILE=/tmp/.random openssl x509 -req -in ${CERT_DIR}/client-req.pem -days 3650 -CA ${CERT_DIR}/root.crt -CAkey ${CERT_DIR}/root.key -set_serial 01 > ${CERT_DIR}/${CLIENT_CERT_NAME}.crt
+    fi
 fi
 
-if [ ! -f ${CERT_DIR}/${CLIENT_CERT_NAME}.crt ]; then
-    RANDFILE=/tmp/.random openssl req -newkey rsa:2048 -days 3650 -nodes -keyout ${CERT_DIR}/${CLIENT_CERT_NAME}.key -subj "/C=$KEY_COUNTRY/ST=$KEY_PROVINCE/L=$KEY_CITY/O=$KEY_ORG/CN=$MYSQL_USER" > ${CERT_DIR}/client-req.pem
-    RANDFILE=/tmp/.random openssl x509 -req -in ${CERT_DIR}/client-req.pem -days 3650 -CA ${CERT_DIR}/root.crt -CAkey ${CERT_DIR}/root.key -set_serial 01 > ${CERT_DIR}/${CLIENT_CERT_NAME}.crt
+if [ "$UID" == '0' ]; then
+    chmod 600 /var/lib/jelastic/keys/SSL-TLS/*
+    chown -R mysql:mysql /var/lib/jelastic/keys/SSL-TLS/* /var/lib/jelastic/keys/SSL-TLS
 fi
-
-chmod 600 /var/lib/jelastic/keys/SSL-TLS/*
-chown -R mysql:mysql /var/lib/jelastic/keys/SSL-TLS/* /var/lib/jelastic/keys/SSL-TLS
