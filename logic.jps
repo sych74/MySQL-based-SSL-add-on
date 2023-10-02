@@ -186,7 +186,7 @@ actions:
         fi
       user: root
     - cmd[${this.affectedNodes}]: |-
-        echo "${globals.certFolder}" >> /etc/jelastic/redeploy.conf
+        grep -q  "${globals.certFolder}" /etc/jelastic/redeploy.conf || echo "${globals.certFolder}" >> /etc/jelastic/redeploy.conf
         source /etc/jelastic/metainf.conf
         if [ "x$COMPUTE_TYPE" == "xmariadb" ] ; then
             if [ -f "${globals.dbConfigFile}" ]; then
