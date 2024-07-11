@@ -7,7 +7,7 @@ targetEditions: any
 categories:
   - apps/dev-and-admin-tools
 description: Enforce DB Connection to use SSL/TLS in MySQL/MariaDB/Percona cluster/standalone. Certificate folder /var/lib/jelastic/keys/SSL-TLS.
-baseUrl: https://raw.githubusercontent.com/jelastic-jps/MySQL-based-SSL-add-on/main
+baseUrl: https://raw.githubusercontent.com/sych74/MySQL-based-SSL-add-on/JE-71370
 
 targetNodes:
   nodeType:
