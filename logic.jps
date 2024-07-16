@@ -5,7 +5,7 @@ name: SSL/TLS Encrypted Connection
 id: mysql-based-ssl
 targetEditions: any
 description: Enforce DB Connection to use SSL/TLS. Certificate folder /var/lib/jelastic/keys/SSL-TLS
-baseUrl: https://raw.githubusercontent.com/jelastic-jps/MySQL-based-SSL-add-on/main
+baseUrl: https://raw.githubusercontent.com/sych74/MySQL-based-SSL-add-on/JE-71370
 
 targetNodes:
   nodeType:
